@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Помощник по обзвону клиентов — демо</title>
+<title>Помощник по заказам — демо</title>
 <meta name="robots" content="noindex,nofollow">
 <style>
 :root{
@@ -140,6 +140,22 @@ ol.steps li{margin-bottom:7px}
 .toast.show{opacity:1}
 kbd{font:inherit;font-size:12.5px;background:var(--wash);border:1px solid var(--ring);border-radius:5px;padding:1px 5px}
 
+/* ---------- поиск клиента: главный элемент экрана приёма ---------- */
+.seek{padding:18px 20px}
+.seek-lab{display:block;font-size:13px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.seek input{
+  width:100%;font-size:21px;padding:12px 15px;border-radius:10px;
+  border:1px solid var(--ring);background:var(--page);color:var(--text-1);
+}
+.seek input::placeholder{color:var(--muted);font-size:17px}
+.seek input:focus{outline:2px solid var(--series-1);outline-offset:-1px;background:var(--surface-1)}
+#seekHint{margin-top:8px}
+.grouphead{
+  font-size:12.5px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--muted);padding:16px 10px 6px;
+}
+tr.grouprow td{border-bottom:1px solid var(--grid);padding:0}
+
 /* ---------- приветственный экран ---------- */
 .ovl{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto}
 .ovl.hidden{display:none !important}
@@ -166,7 +182,7 @@ kbd{font:inherit;font-size:12.5px;background:var(--wash);border:1px solid var(--
 
 <header>
   <div class="hrow">
-    <h1>Обзвон и прогноз заказов</h1>
+    <h1>Приём заказов и прогноз</h1>
     <span class="badge" id="companyBadge">демо-версия</span>
     <span class="badge" id="dataBadge">нет данных</span>
     <span class="sp"></span>
@@ -175,8 +191,8 @@ kbd{font:inherit;font-size:12.5px;background:var(--wash);border:1px solid var(--
     <button class="btn" id="btnSave">Сохранить в файл</button>
   </div>
   <nav id="tabs">
-    <button data-tab="today"    aria-selected="true">Сегодня</button>
-    <button data-tab="call"     aria-selected="false">Звонок</button>
+    <button data-tab="today"    aria-selected="true">Приём заказов</button>
+    <button data-tab="call"     aria-selected="false">Заказ</button>
     <button data-tab="rem"      aria-selected="false">Напоминания <span id="navRem" class="badge" style="margin-left:4px"></span></button>
     <button data-tab="forecast" aria-selected="false">Прогноз</button>
     <button data-tab="quality"  aria-selected="false">Точность</button>
@@ -193,19 +209,27 @@ kbd{font:inherit;font-size:12.5px;background:var(--wash);border:1px solid var(--
   </div>
 
   <div id="todayBody" class="hidden">
+    <!-- Клиент звонит — найти его надо за секунды. Поэтому поиск здесь главный. -->
+    <div class="card seek">
+      <label for="fSearch" class="seek-lab">Клиент звонит — найдите его</label>
+      <input type="text" id="fSearch" autocomplete="off" spellcheck="false"
+             placeholder="имя, код или телефон — начните печатать">
+      <div class="small muted" id="seekHint">Нажмите на строку в списке ниже или найдите здесь. <kbd>Esc</kbd> очищает.</div>
+    </div>
+
     <div class="tiles">
-      <div class="tile"><div class="lab">К обзвону сегодня</div><div class="val tnum" id="kToCall">—</div><div class="sub" id="kToCallSub"></div></div>
-      <div class="tile"><div class="lab">Ожидаемая сумма</div><div class="val tnum" id="kSum">—</div><div class="sub">по предлагаемым заказам</div></div>
+      <div class="tile"><div class="lab">Ждём заказ сегодня</div><div class="val tnum" id="kToCall">—</div><div class="sub" id="kToCallSub"></div></div>
+      <div class="tile"><div class="lab">Принято сегодня</div><div class="val tnum" id="kDone">—</div><div class="sub" id="kDoneSub"></div></div>
+      <div class="tile"><div class="lab">Не позвонили</div><div class="val tnum" id="kMissed">—</div><div class="sub" id="kMissedSub">пропустили свой день</div></div>
       <div class="tile"><div class="lab">Напомнить</div><div class="val tnum" id="kOver">—</div><div class="sub" id="kOverSub">на сегодня</div></div>
-      <div class="tile"><div class="lab">Обзвонено сегодня</div><div class="val tnum" id="kDone">—</div><div class="sub" id="kDoneSub"></div></div>
     </div>
 
     <div class="card">
       <div class="row" style="margin-bottom:12px">
-        <h2 style="margin:0">Список обзвона</h2>
+        <h2 style="margin:0" id="listTitle">Клиенты</h2>
         <span class="sp" style="flex:1"></span>
-        <label class="row small" style="gap:6px"><input type="checkbox" id="fHideDone"> скрыть обзвоненных</label>
-        <input type="text" id="fSearch" placeholder="поиск по имени или коду" style="width:210px">
+        <label class="row small" style="gap:6px"><input type="checkbox" id="fHideDone"> скрыть принятые</label>
+        <label class="row small" style="gap:6px"><input type="checkbox" id="fAll"> показать всех</label>
       </div>
       <div class="scroll">
         <table id="tblToday">
@@ -214,17 +238,18 @@ kbd{font:inherit;font-size:12.5px;background:var(--wash);border:1px solid var(--
             <th>Клиент</th>
             <th>Телефон</th>
             <th>График</th>
-            <th class="num">Не звонили</th>
+            <th class="num">Не заказывал</th>
             <th class="num">Позиций</th>
-            <th class="num">Прогноз, €</th>
+            <th class="num">Ожидаем, €</th>
             <th>Статус</th>
           </tr></thead>
           <tbody></tbody>
         </table>
       </div>
-      <p class="small muted" style="margin:12px 0 0">
-        Сортировка — по просрочке: сколько прошло дней относительно обычного цикла закупок этого магазина.
-        Нажмите на строку, чтобы открыть карточку звонка.
+      <p class="small muted" style="margin:12px 0 0" id="kSumNote"></p>
+      <p class="small muted" style="margin:6px 0 0">
+        Сверху те, кто должен был позвонить и не позвонил, — им стоит набрать самой.
+        Дальше те, у кого заказ сегодня по графику. Нажмите на строку, чтобы принять заказ.
       </p>
     </div>
   </div>
@@ -232,7 +257,7 @@ kbd{font:inherit;font-size:12.5px;background:var(--wash);border:1px solid var(--
 
 <!-- ===================== ЗВОНОК ===================== -->
 <section id="tab-call" class="hidden">
-  <div id="callEmpty" class="card empty">Выберите клиента в списке на вкладке «Сегодня».</div>
+  <div id="callEmpty" class="card empty">Найдите клиента на вкладке «Приём заказов» — по имени, коду или телефону.</div>
   <div id="callBody" class="hidden"></div>
 </section>
 
@@ -391,13 +416,13 @@ kbd{font:inherit;font-size:12.5px;background:var(--wash);border:1px solid var(--
 
 <div class="ovl hidden" id="welcome">
   <div class="ovl-box">
-    <h2>Помощник по обзвону клиентов</h2>
+    <h2>Помощник по заказам</h2>
     <p class="small" style="margin-bottom:4px">Черновик для Анны</p>
     <p>Читает историю продаж из ICONOS и берёт на себя то, что сейчас живёт в голове,
        на стикерах и в списках на стене.</p>
     <ul>
-      <li><b>Кому звонить сегодня</b>Сама определяет график каждого магазина — «по вторникам», «по пн и чт», «по четвергам раз в 4 недели». Сверху те, кто свой день пропустил.</li>
-      <li><b>Что предложить</b>Готовый заказ ещё до звонка: позиции, которые этот магазин берёт, и в каком количестве. Отдельно — что он перестал брать.</li>
+      <li><b>Клиент звонит — заказ уже готов</b>Находите магазин по имени, коду или телефону — и видите собранный заказ: позиции, которые он берёт, и в каком количестве. Остаётся подтвердить и поправить.</li>
+      <li><b>Кто не позвонил</b>Сама определяет график каждого магазина — «по вторникам», «по пн и чт», «по четвергам раз в 4 недели» — и показывает, кто свой день пропустил. Этим стоит набрать самой.</li>
       <li><b>Не забыть обещанное</b>Товара не было, обещали через неделю? Программа напомнит в нужный день: кому, что и сколько. Плюс прогноз плана месяца и заявка на закупку.</li>
       <li><b>Учится на ваших правках</b>Вы поправили количество после звонка — в следующий раз программа предложит уже так, как надо.</li>
     </ul>
@@ -711,8 +736,10 @@ function recompute(){
         adj: adj ? adj.f : 1, adjN: adj ? adj.n : 0,
         price: (skus[p.sku] && skus[p.sku].price) || 0,
         overdue: interval ? daysSince/interval : null,
-        // выпала ли позиция: было ≥3 заказов и молчит больше 2.5 циклов
-        dropped: (p.ev.length>=3 && interval && daysSince > interval*2.5)
+        // Выпала ли позиция. Одних циклов мало: у магазина, который берёт
+        // дважды в неделю, 11 дней — это опоздание, а не отказ. Поэтому ещё
+        // и абсолютный порог: меньше 40 дней молчания «выпавшим» не считаем.
+        dropped: (p.ev.length>=3 && interval && daysSince > Math.max(interval*2.5, 40))
       };
       items.push(item);
     }
@@ -812,32 +839,77 @@ function renderToday(){
 
   const q = ($('#fSearch').value||'').toLowerCase().trim();
   const hideDone = $('#fHideDone').checked;
+  const showAll = $('#fAll').checked;
 
-  const due = M.clients.filter(needsCallToday);
-  const over = M.clients.filter(c=>c.active && (c.sched ? c.missed>0 : (c.overdue!=null && c.overdue>=1)));
-  const doneToday = M.clients.filter(c=>calledToday(c.cc));
-  const doneSum = doneToday.reduce((s,c)=> s + (S.calls[c.cc+'|'+iso(today())].total||0), 0);
+  const phoneOf = cc => ((S.clients[cc]&&S.clients[cc].phone)||'');
+  // Клиент звонит сам, поэтому «не позвонил» = пропустил свой день графика
+  const missedCall = M.clients.filter(c=>c.active && (c.sched ? c.missed>0 : (c.overdue!=null && c.overdue>=1)) && !calledToday(c.cc));
+  const dueToday   = M.clients.filter(c=>c.active && !missedCall.includes(c) && (c.sched ? c.dueIn===0 : (c.overdue!=null && c.overdue>=.7)));
+  const takenToday = M.clients.filter(c=>calledToday(c.cc) && S.calls[c.cc+'|'+iso(today())].outcome==='order');
+  const takenSum   = takenToday.reduce((s,c)=> s + (S.calls[c.cc+'|'+iso(today())].total||0), 0);
   const remDue = dueReminders();
 
-  $('#kToCall').textContent = due.length;
-  $('#kToCallSub').textContent = `из ${M.clients.length} в базе`;
-  $('#kSum').textContent = eur(due.reduce((s,c)=>s+c.predTotal,0)) + ' €';
+  $('#kToCall').textContent = dueToday.length;
+  $('#kToCallSub').textContent = dueToday.length
+    ? 'ожидаем на ' + eur(dueToday.reduce((s,c)=>s+c.predTotal,0)) + ' €' : 'на сегодня никого';
+  $('#kDone').textContent = takenToday.length;
+  $('#kDoneSub').textContent = takenSum ? 'на ' + eur(takenSum) + ' €' : '—';
+  $('#kMissed').textContent = missedCall.length;
+  $('#kMissedSub').textContent = missedCall.length ? 'стоит набрать самой' : 'все на связи';
   $('#kOver').textContent = remDue.length;
   $('#kOverSub').textContent = remDue.length
     ? (remDue.filter(r=>r.due<iso(today())).length ? 'есть просроченные' : 'на сегодня')
     : 'всё закрыто';
-  $('#kDone').textContent = doneToday.length;
-  $('#kDoneSub').textContent = doneSum ? 'на ' + eur(doneSum) + ' €' : '—';
 
   const tb = $('#tblToday tbody'); tb.innerHTML='';
-  const list = M.clients.filter(c=>{
-    if(hideDone && calledToday(c.cc)) return false;
-    if(!q) return true;
-    return (c.name||'').toLowerCase().includes(q) || c.cc.toLowerCase().includes(q);
-  });
-  if(!list.length){ tb.innerHTML = '<tr><td colspan="8" class="empty">Ничего не найдено</td></tr>'; return; }
 
-  for(const c of list){
+  // Поиск идёт по всей базе — клиент может позвонить в любой день, не только в свой
+  const match = c => !q
+    || (c.name||'').toLowerCase().includes(q)
+    || c.cc.toLowerCase().includes(q)
+    || phoneOf(c.cc).replace(/\s/g,'').includes(q.replace(/\s/g,''));
+
+  let groups;
+  if(q){
+    const found = M.clients.filter(match);
+    $('#listTitle').textContent = `Найдено: ${found.length}`;
+    $('#seekHint').innerHTML = found.length
+      ? `Нажмите на нужного, чтобы принять заказ. <kbd>Esc</kbd> очищает.`
+      : `Никого не нашлось. Проверьте написание или очистите поиск — <kbd>Esc</kbd>.`;
+    groups = [[null, found]];
+  } else {
+    $('#listTitle').textContent = 'Клиенты';
+    $('#seekHint').innerHTML = 'Нажмите на строку в списке ниже или найдите здесь. <kbd>Esc</kbd> очищает.';
+    const rest = M.clients.filter(c => !missedCall.includes(c) && !dueToday.includes(c));
+    groups = [
+      ['Не позвонили — стоит набрать самой', missedCall],
+      ['Ждём заказ сегодня', dueToday]
+    ];
+    if(showAll) groups.push(['Остальные', rest]);
+  }
+
+  let shown = 0;
+  for(const [title, arr0] of groups){
+    const arr = arr0.filter(c => !(hideDone && calledToday(c.cc)));
+    if(!arr.length) continue;
+    if(title){
+      const gr = document.createElement('tr');
+      gr.className = 'grouprow';
+      gr.innerHTML = `<td colspan="8"><div class="grouphead">${title} · ${arr.length}</div></td>`;
+      tb.appendChild(gr);
+    }
+    for(const c of arr){ shown++; renderClientRow(tb, c); }
+  }
+  if(!shown){
+    tb.innerHTML = `<tr><td colspan="8" class="empty">${q ? 'Ничего не найдено' :
+      'На сегодня всё чисто. Поставьте «показать всех», чтобы увидеть остальных.'}</td></tr>`;
+  }
+  $('#kSumNote').textContent = q ? '' :
+    (showAll ? '' : 'Показаны только те, кого касается сегодняшний день. «Показать всех» — вся база.');
+}
+
+function renderClientRow(tb, c){
+  {
     const b = bucket(c);
     const done = calledToday(c.cc);
     const ph = (S.clients[c.cc]&&S.clients[c.cc].phone) || '';
@@ -850,7 +922,7 @@ function renderToday(){
     tr.className = 'clickable';
     tr.onclick = () => openCall(c.cc);
     tr.innerHTML = `
-      <td>${done ? '<span title="обзвонен сегодня" style="color:var(--good-text)">✓</span>' : ''}</td>
+      <td>${done ? '<span title="заказ уже принят сегодня" style="color:var(--good-text)">✓</span>' : ''}</td>
       <td><b>${esc(c.name)}</b><div class="small muted">${esc(c.cc)}</div></td>
       <td class="small" style="white-space:nowrap">${esc(ph) || '<span class="muted">—</span>'}</td>
       <td class="small">${schedCell}</td>
@@ -944,7 +1016,7 @@ function renderCall(){
 
     <div class="card">
       <div class="row" style="margin-bottom:10px">
-        <h2 style="margin:0">Предлагаемый заказ</h2>
+        <h2 style="margin:0">Заказ</h2>
         <span style="flex:1"></span>
         <button class="btn" id="btnCopy">Скопировать для ICONOS</button>
       </div>
@@ -959,7 +1031,7 @@ function renderCall(){
         <span class="small muted">Итого без НДС</span>
         <span style="font-size:22px;font-weight:640" class="tnum" id="sugTotal">—</span>
         <span style="font-size:18px">€</span>
-      </div>` : '<div class="empty">Для этого клиента пока рано — по его циклу заказ не ожидается.</div>'}
+      </div>` : '<div class="empty">По графику этому клиенту заказ пока не нужен. Если он всё-таки звонит — добавьте позиции из блока ниже или примите заказ вручную в ICONOS.</div>'}
     </div>
 
     ${c.dropped.length ? `
@@ -971,7 +1043,7 @@ function renderCall(){
     </div>` : ''}
 
     <div class="card">
-      <h2>Зафиксировать результат звонка</h2>
+      <h2>Зафиксировать результат</h2>
       <p class="small">Поправьте количества выше так, как клиент заказал на самом деле, снимите галочки с того,
       что он не взял, — и нажмите «Записать». Программа сравнит со своим прогнозом и станет точнее.</p>
       <div class="row">
@@ -1265,8 +1337,12 @@ function renderForecast(){
     ? (gap<=0 ? 'план выполнен' : 'план не выполнен')
     : (gap<=0 ? 'план закрывается' : (gap/plan<.12 ? 'на грани' : 'план под угрозой'));
 
-  const dueNow = M.clients.filter(c=>c.active && c.overdue!=null && c.overdue>=.7);
-  const perDay = Math.ceil(dueNow.length/Math.max(1,Math.min(daysLeft, 10)));
+  // Заказы приходят сами, поэтому «сколько звонков в день» смысла не имеет.
+  // Полезнее средний чек: он переводит нехватку до плана в число заказов.
+  const monthOrders = new Set(S.lines.filter(l => new Date(l.date+'T00:00:00') >= mStart)
+                                     .map(l => l.cc+'|'+l.date)).size;
+  const avgCheck = monthOrders ? fact/monthOrders : 0;
+  const needOrders = (gapAhead => gapAhead>0 && avgCheck ? Math.ceil(gapAhead/avgCheck) : 0);
 
   $('#planBlock').innerHTML = `
     <div class="tiles" style="margin:10px 0 4px">
@@ -1277,9 +1353,11 @@ function renderForecast(){
       <div class="tile"><div class="lab">${gap>0?'Не хватает':'Сверх плана'}</div>
         <div class="val tnum" style="color:${statusCol}">${eur(Math.abs(gap))} €</div>
         <div class="sub">${statusTxt}</div></div>
-      <div class="tile"><div class="lab">Нужен темп</div>
-        <div class="val tnum">${monthOver ? '—' : perDay}</div>
-        <div class="sub">${monthOver ? 'новый месяц с 1-го числа' : plural(perDay,'звонок','звонка','звонков')+' в день'}</div></div>
+      <div class="tile"><div class="lab">Средний чек</div>
+        <div class="val tnum">${eur(avgCheck)} €</div>
+        <div class="sub">${monthOver ? `${monthOrders} ${plural(monthOrders,'заказ','заказа','заказов')} за месяц`
+          : (gap>0 && avgCheck ? `не хватает ≈ ${needOrders(gap)} ${plural(needOrders(gap),'заказа','заказов','заказов')}`
+                               : `${monthOrders} ${plural(monthOrders,'заказ','заказа','заказов')} с начала месяца`)}</div></div>
     </div>
     <div style="margin-top:14px">
       <div class="row small" style="justify-content:space-between">
@@ -1479,7 +1557,7 @@ function loadDemo(){
       for(const wd of wdays){
         const d = new Date(w.getTime());
         d.setDate(d.getDate() + ((wd - d.getDay() + 7) % 7));
-        if(d >= start && d <= T) slots.push(new Date(d));
+        if(d >= start && d < T) slots.push(new Date(d));
       }
     }
     slots.sort((a,b)=>a-b);
@@ -1552,7 +1630,7 @@ function go(tab){
   $$('#tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab===tab)));
   ['today','call','rem','forecast','quality','data'].forEach(t =>
     $('#tab-'+t).classList.toggle('hidden', t!==tab));
-  if(tab==='today') renderToday();
+  if(tab==='today'){ renderToday(); const s=$('#fSearch'); if(s && !$('#todayBody').classList.contains('hidden')) s.focus(); }
   if(tab==='call') renderCall();
   if(tab==='rem'){ fillReminderForm(); renderReminders(); }
   if(tab==='forecast') renderForecast();
@@ -1599,6 +1677,15 @@ $('#btnTheme').onclick = () => {
 };
 $('#fSearch').oninput = renderToday;
 $('#fHideDone').onchange = renderToday;
+$('#fAll').onchange = renderToday;
+$('#fSearch').onkeydown = e => {
+  if(e.key === 'Escape'){ e.stopPropagation(); e.target.value = ''; renderToday(); }
+  // Enter открывает единственного найденного — клиент на линии, лишние клики ни к чему
+  if(e.key === 'Enter'){
+    const rows = $$('#tblToday tbody tr.clickable');
+    if(rows.length === 1) rows[0].click();
+  }
+};
 $('#fcDays').onchange = renderForecast;
 $('#btnApplyMap').onclick = applyMap;
 $('#btnParsePaste').onclick = () => {
