@@ -177,6 +177,7 @@ kbd{font:inherit;font-size:12.5px;background:var(--wash);border:1px solid var(--
   <nav id="tabs">
     <button data-tab="today"    aria-selected="true">Сегодня</button>
     <button data-tab="call"     aria-selected="false">Звонок</button>
+    <button data-tab="rem"      aria-selected="false">Напоминания <span id="navRem" class="badge" style="margin-left:4px"></span></button>
     <button data-tab="forecast" aria-selected="false">Прогноз</button>
     <button data-tab="quality"  aria-selected="false">Точность</button>
     <button data-tab="data"     aria-selected="false">Данные</button>
@@ -195,7 +196,7 @@ kbd{font:inherit;font-size:12.5px;background:var(--wash);border:1px solid var(--
     <div class="tiles">
       <div class="tile"><div class="lab">К обзвону сегодня</div><div class="val tnum" id="kToCall">—</div><div class="sub" id="kToCallSub"></div></div>
       <div class="tile"><div class="lab">Ожидаемая сумма</div><div class="val tnum" id="kSum">—</div><div class="sub">по предлагаемым заказам</div></div>
-      <div class="tile"><div class="lab">Просрочено</div><div class="val tnum" id="kOver">—</div><div class="sub">давно не заказывали</div></div>
+      <div class="tile"><div class="lab">Напомнить</div><div class="val tnum" id="kOver">—</div><div class="sub" id="kOverSub">на сегодня</div></div>
       <div class="tile"><div class="lab">Обзвонено сегодня</div><div class="val tnum" id="kDone">—</div><div class="sub" id="kDoneSub"></div></div>
     </div>
 
@@ -212,8 +213,8 @@ kbd{font:inherit;font-size:12.5px;background:var(--wash);border:1px solid var(--
             <th style="width:34px"></th>
             <th>Клиент</th>
             <th>Телефон</th>
+            <th>График</th>
             <th class="num">Не звонили</th>
-            <th class="num">Обычный цикл</th>
             <th class="num">Позиций</th>
             <th class="num">Прогноз, €</th>
             <th>Статус</th>
@@ -233,6 +234,38 @@ kbd{font:inherit;font-size:12.5px;background:var(--wash);border:1px solid var(--
 <section id="tab-call" class="hidden">
   <div id="callEmpty" class="card empty">Выберите клиента в списке на вкладке «Сегодня».</div>
   <div id="callBody" class="hidden"></div>
+</section>
+
+<!-- ===================== НАПОМИНАНИЯ ===================== -->
+<section id="tab-rem" class="hidden">
+  <div class="tiles">
+    <div class="tile"><div class="lab">Открытых напоминаний</div><div class="val tnum" id="remCount">0</div><div class="sub">всего не закрыто</div></div>
+    <div class="tile"><div class="lab">Просрочено</div><div class="val tnum" id="remLate">0</div><div class="sub">срок уже прошёл</div></div>
+    <div class="tile"><div class="lab">На сегодня</div><div class="val tnum" id="remToday">0</div><div class="sub">сделать сегодня</div></div>
+    <div class="tile"><div class="lab">Закрыто</div><div class="val tnum" id="remDone">0</div><div class="sub">за всё время</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Добавить напоминание</h2>
+    <p class="small">Например: клиент заказал творог, а его нет на складе — будет через неделю. Или просил перезвонить в четверг.</p>
+    <div class="row" style="align-items:flex-end">
+      <label class="fld" style="flex:2;min-width:200px"><span>Клиент</span>
+        <select id="rNewClient"></select></label>
+      <label class="fld" style="min-width:150px"><span>Что</span>
+        <select id="rNewKind">
+          <option value="stock">Ждём товар</option>
+          <option value="callback">Перезвонить</option>
+          <option value="note">Не забыть</option>
+        </select></label>
+      <label class="fld" style="flex:2;min-width:200px"><span>Подробности</span>
+        <input type="text" id="rNewText" placeholder="Творог DEREVENKA 24 шт"></label>
+      <label class="fld" style="min-width:140px"><span>Когда напомнить</span>
+        <input type="date" id="rNewDue"></label>
+      <button class="btn primary" id="rNewAdd">Добавить</button>
+    </div>
+  </div>
+
+  <div class="card"><div id="remBody"></div></div>
 </section>
 
 <!-- ===================== ПРОГНОЗ ===================== -->
@@ -390,11 +423,16 @@ let S = {
   clients: {},      // cc -> {phone, note}
   calls: {},        // 'cc|YYYY-MM-DD' -> {ts, lines:[{sku,pred,act}], total, outcome}
   adj: {},          // 'cc|sku' -> {f: factor, n: count}
+  reminders: [],    // {id, cc, cname, kind:'stock'|'callback'|'note', sku, sname, qty, due, text, done}
   plan: 0,
   demo: false
 };
+function blankState(){
+  return {lines:[], clients:{}, calls:{}, adj:{}, reminders:[], plan:0, demo:false};
+}
 function save(){ try{ localStorage.setItem(LS, JSON.stringify(S)); }catch(e){} }
-function load(){ try{ const r=localStorage.getItem(LS); if(r) S=Object.assign(S,JSON.parse(r)); }catch(e){} }
+function load(){ try{ const r=localStorage.getItem(LS); if(r) S=Object.assign(S,JSON.parse(r)); }catch(e){}
+  if(!Array.isArray(S.reminders)) S.reminders = []; }
 
 /* =========================================================================
    УТИЛИТЫ
@@ -413,6 +451,50 @@ function num(n,d){ d=d==null?0:d; return (n||0).toLocaleString('ru-RU',{minimumF
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function plural(n,a,b,c){ n=Math.abs(n)%100; const m=n%10;
   if(n>10&&n<20) return c; if(m>1&&m<5) return b; if(m===1) return a; return c; }
+
+/* ---- дни недели: заказы идут строго по графику, поэтому день важнее интервала ---- */
+const WD_EVERY = ['по воскресеньям','по понедельникам','по вторникам','по средам','по четвергам','по пятницам','по субботам'];
+const WD_ON    = ['в воскресенье','в понедельник','во вторник','в среду','в четверг','в пятницу','в субботу'];
+const WD_SHORT = ['вс','пн','вт','ср','чт','пт','сб'];
+const MONTHS   = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+function dmy(d){ return d.getDate()+' '+MONTHS[d.getMonth()]; }
+
+/* Определяет устойчивый день недели по истории заказов клиента.
+   Возвращает {days:[0..6], share} либо null, если графика не видно. */
+function detectSchedule(dateObjs){
+  if(dateObjs.length < 4) return null;
+  const cnt = [0,0,0,0,0,0,0];
+  for(const d of dateObjs) cnt[d.getDay()]++;
+  const order = cnt.map((n,i)=>({i,n})).sort((a,b)=>b.n-a.n);
+  const total = dateObjs.length;
+  const one = order[0].n / total;
+  if(one >= .6) return {days:[order[0].i], share:one};
+  const two = (order[0].n + order[1].n) / total;
+  if(two >= .75 && order[1].n >= 2) return {days:[order[0].i, order[1].i].sort(), share:two};
+  return null;
+}
+/* Ближайшая дата нужного дня недели начиная с from включительно */
+function nextScheduled(days, from){
+  for(let k=0;k<14;k++){
+    const d = new Date(from.getTime() + k*DAY);
+    if(days.includes(d.getDay())) return d;
+  }
+  return null;
+}
+/* Следующий слот графика после даты d.
+   Один день недели раз в N недель → ровно +N недель.
+   Два дня в неделю → ближайший из них. */
+function nextSlot(sc, d){
+  if(sc.days.length >= 2 || sc.weeks <= 1)
+    return nextScheduled(sc.days, new Date(d.getTime() + DAY));
+  return new Date(d.getTime() + sc.weeks * 7 * DAY);
+}
+function scheduleLabel(sc){
+  if(!sc) return null;
+  const base = sc.days.length===1 ? WD_EVERY[sc.days[0]]
+             : 'по ' + sc.days.map(d=>WD_SHORT[d]).join(' и ');
+  return sc.weeks > 1 ? `${base}, раз в ${sc.weeks} ${plural(sc.weeks,'неделю','недели','недель')}` : base;
+}
 let toastT;
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show');
   clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2200); }
@@ -646,6 +728,20 @@ function recompute(){
     const daysSince = daysBetween(lastOrder, T);
     const active = cycle ? daysSince <= cycle*4 + 30 : daysSince <= 90;
 
+    // Заказы идут строго по графику — день недели важнее среднего интервала.
+    // Периодичность в неделях берём из медианного интервала: «по четвергам»
+    // и «по четвергам раз в 4 недели» — это разные графики.
+    const sched = detectSchedule(dObjs);
+    let nextDue = null, dueIn = null, missed = 0;
+    if(sched){
+      sched.weeks = sched.days.length >= 2 ? 1 : Math.max(1, Math.round((cycle||7)/7));
+      let cur = nextSlot(sched, lastOrder);
+      let guard = 0;
+      while(cur && cur < T && guard++ < 400){ missed++; cur = nextSlot(sched, cur); }
+      nextDue = cur;
+      dueIn = nextDue ? daysBetween(T, nextDue) : null;
+    }
+
     // предлагаемые позиции: пора или уже пора (>=0.65 цикла).
     // Выпавшие исключаем — они идут отдельным блоком «перестал брать»,
     // чтобы одна позиция не оказалась в двух списках сразу.
@@ -658,13 +754,24 @@ function recompute(){
       cc:c.cc, name:c.name, orders:ds.length, rev:c.rev, rev90:c.rev90,
       cycle, daysSince, lastOrder: iso(lastOrder), active,
       overdue: cycle ? daysSince/cycle : null,
+      sched, schedLabel: scheduleLabel(sched), nextDue, dueIn, missed,
       items, suggest, predTotal,
       dropped: items.filter(i=>i.dropped)
     });
   }
+  // Сортировка: сначала пропустившие график, потом чей день сегодня, дальше по близости дня.
+  // Клиенты без распознанного графика падают в конец, но упорядочены по просрочке.
   clients.sort((a,b)=>{
-    const ao = a.overdue==null?-1:a.overdue, bo = b.overdue==null?-1:b.overdue;
-    if(Math.abs(ao-bo) > .05) return bo-ao;
+    const rank = c => {
+      if(!c.active) return 500;
+      if(c.sched){
+        if(c.missed > 0) return -100 - c.missed;   // пропустил свой день
+        return c.dueIn;                             // 0 = сегодня, 1 = завтра …
+      }
+      return c.overdue!=null ? 200 - Math.min(100, c.overdue*10) : 400;
+    };
+    const d = rank(a) - rank(b);
+    if(d !== 0) return d;
     return b.rev90 - a.rev90;
   });
   M = { clients, skus, byC: Object.fromEntries(clients.map(c=>[c.cc,c])) };
@@ -673,11 +780,24 @@ function recompute(){
 
 function bucket(c){
   if(!c.active) return {cls:'c-mut',  txt:'спящий'};
+  if(c.sched){
+    if(c.missed >= 2) return {cls:'c-crit', txt:`пропустил ${c.missed} ${plural(c.missed,'заказ','заказа','заказов')}`};
+    if(c.missed === 1) return {cls:'c-crit', txt:'пропустил заказ'};
+    if(c.dueIn === 0)  return {cls:'c-warn', txt:'сегодня по графику'};
+    if(c.dueIn === 1)  return {cls:'c-warn', txt:'завтра по графику'};
+    return {cls:'c-ok', txt:`через ${c.dueIn} ${plural(c.dueIn,'день','дня','дней')}`};
+  }
   if(c.overdue==null) return {cls:'c-mut', txt:'мало истории'};
   if(c.overdue >= 1.6) return {cls:'c-crit', txt:'сильно просрочен'};
   if(c.overdue >= 1.0) return {cls:'c-crit', txt:'просрочен'};
   if(c.overdue >= .7)  return {cls:'c-warn', txt:'пора звонить'};
   return {cls:'c-ok', txt:'рано'};
+}
+// «нужен контакт сегодня»: пропустил график, день сегодня, или (без графика) просрочен
+function needsCallToday(c){
+  if(!c.active) return false;
+  if(c.sched) return c.missed > 0 || c.dueIn === 0;
+  return c.overdue != null && c.overdue >= .7;
 }
 function calledToday(cc){ return !!S.calls[cc+'|'+iso(today())]; }
 
@@ -693,15 +813,19 @@ function renderToday(){
   const q = ($('#fSearch').value||'').toLowerCase().trim();
   const hideDone = $('#fHideDone').checked;
 
-  const due = M.clients.filter(c=>c.active && c.overdue!=null && c.overdue>=.7);
-  const over = M.clients.filter(c=>c.active && c.overdue!=null && c.overdue>=1);
+  const due = M.clients.filter(needsCallToday);
+  const over = M.clients.filter(c=>c.active && (c.sched ? c.missed>0 : (c.overdue!=null && c.overdue>=1)));
   const doneToday = M.clients.filter(c=>calledToday(c.cc));
   const doneSum = doneToday.reduce((s,c)=> s + (S.calls[c.cc+'|'+iso(today())].total||0), 0);
+  const remDue = dueReminders();
 
   $('#kToCall').textContent = due.length;
   $('#kToCallSub').textContent = `из ${M.clients.length} в базе`;
   $('#kSum').textContent = eur(due.reduce((s,c)=>s+c.predTotal,0)) + ' €';
-  $('#kOver').textContent = over.length;
+  $('#kOver').textContent = remDue.length;
+  $('#kOverSub').textContent = remDue.length
+    ? (remDue.filter(r=>r.due<iso(today())).length ? 'есть просроченные' : 'на сегодня')
+    : 'всё закрыто';
   $('#kDone').textContent = doneToday.length;
   $('#kDoneSub').textContent = doneSum ? 'на ' + eur(doneSum) + ' €' : '—';
 
@@ -717,18 +841,24 @@ function renderToday(){
     const b = bucket(c);
     const done = calledToday(c.cc);
     const ph = (S.clients[c.cc]&&S.clients[c.cc].phone) || '';
+    const rd = dueReminders(c.cc).length;
+    const when = c.dueIn===0 ? 'сегодня' : c.dueIn===1 ? 'завтра' : c.nextDue ? dmy(c.nextDue) : null;
+    const schedCell = c.sched
+      ? `<b>${esc(c.schedLabel)}</b>${when?`<div class="small muted">следующий ${when}</div>`:''}`
+      : (c.cycle ? `<span class="muted">каждые ${c.cycle} дн</span><div class="small muted">графика не видно</div>` : '<span class="muted">—</span>');
     const tr = document.createElement('tr');
     tr.className = 'clickable';
     tr.onclick = () => openCall(c.cc);
     tr.innerHTML = `
       <td>${done ? '<span title="обзвонен сегодня" style="color:var(--good-text)">✓</span>' : ''}</td>
       <td><b>${esc(c.name)}</b><div class="small muted">${esc(c.cc)}</div></td>
-      <td class="small">${esc(ph) || '<span class="muted">—</span>'}</td>
+      <td class="small" style="white-space:nowrap">${esc(ph) || '<span class="muted">—</span>'}</td>
+      <td class="small">${schedCell}</td>
       <td class="num">${c.daysSince} <span class="muted small">дн</span></td>
-      <td class="num">${c.cycle ? c.cycle+' <span class="muted small">дн</span>' : '<span class="muted">—</span>'}</td>
       <td class="num">${c.suggest.length}${c.dropped.length?` <span style="color:var(--serious)" title="выпавшие позиции">+${c.dropped.length}</span>`:''}</td>
       <td class="num"><b>${eur(c.predTotal)}</b></td>
-      <td><span class="chip ${b.cls}"><i class="dot"></i>${b.txt}</span></td>`;
+      <td><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start"><span class="chip ${b.cls}"><i class="dot"></i>${b.txt}</span>${
+        rd?`<span class="chip c-crit" style="font-size:12px"><i class="dot"></i>напомнить: ${rd}</span>`:''}</div></td>`;
     tb.appendChild(tr);
   }
 }
@@ -761,6 +891,7 @@ function renderCall(){
       <td class="num small muted">${eur2(i.price)}</td>
       <td class="num lt tnum">${eur2(i.qty*i.price)}</td>
       <td class="small muted">${conf}</td>
+      <td><button class="btn ghost small noStock" data-sku="${esc(i.sku)}" title="Товара нет на складе — поставить напоминание">нет на складе</button></td>
     </tr>`;
   }).join('');
 
@@ -794,6 +925,23 @@ function renderCall(){
       ${prevCall ? `<div class="note">Прошлый зафиксированный звонок: ${prevCall.split('|')[1]} — заказ на ${eur2(S.calls[prevCall].total)} €</div>` : ''}
     </div>
 
+    ${openReminders(c.cc).length ? `
+    <div class="card" style="border-left:3px solid var(--critical)">
+      <h2>Не забыть сказать</h2>
+      <div class="scroll"><table><tbody>
+        ${openReminders(c.cc).map(r=>{
+          const st = remState(r);
+          const what = r.kind==='stock'
+            ? `<b>${esc(r.sname||'товар')}</b>${r.qty?` — ${num(r.qty)} шт`:''} <span class="muted">— обещали привезти</span>`
+            : `<b>${esc(r.text||'')}</b> <span class="muted">— ${KIND[r.kind].label}</span>`;
+          return `<tr><td>${what}</td>
+            <td class="num small">${dmy(new Date(r.due+'T00:00:00'))}</td>
+            <td><span class="chip ${st.cls}"><i class="dot"></i>${st.txt}</span></td>
+            <td style="text-align:right"><button class="btn small remDoneCard" data-id="${r.id}">Сделано</button></td></tr>`;
+        }).join('')}
+      </tbody></table></div>
+    </div>` : ''}
+
     <div class="card">
       <div class="row" style="margin-bottom:10px">
         <h2 style="margin:0">Предлагаемый заказ</h2>
@@ -805,7 +953,7 @@ function renderCall(){
         <thead><tr>
           <th style="width:34px"></th><th>Товар</th><th class="num">Не брал</th>
           <th class="num">Прошлый раз</th><th class="num">Кол-во</th><th class="num">Цена</th>
-          <th class="num">Сумма</th><th>Уверенность</th>
+          <th class="num">Сумма</th><th>Уверенность</th><th></th>
         </tr></thead><tbody>${rows}</tbody></table></div>
       <div class="row" style="margin-top:14px;justify-content:flex-end">
         <span class="small muted">Итого без НДС</span>
@@ -830,6 +978,7 @@ function renderCall(){
         <button class="btn primary" id="btnRecord">Записать заказ</button>
         <button class="btn" id="btnNoAnswer">Не дозвонилась</button>
         <button class="btn" id="btnRefused">Отказ</button>
+        <button class="btn" id="btnCallback">Перезвонить…</button>
         <span style="flex:1"></span>
         <button class="btn ghost" id="btnBack">← к списку</button>
       </div>
@@ -859,6 +1008,47 @@ function renderCall(){
   $('#btnRecord').onclick   = () => recordCall(c,'order');
   $('#btnNoAnswer').onclick = () => recordCall(c,'noanswer');
   $('#btnRefused').onclick  = () => recordCall(c,'refused');
+
+  // «нет на складе» — обещали привезти, поставить напоминание
+  $$('.noStock').forEach(btn => btn.onclick = e => {
+    e.stopPropagation();
+    const tr = btn.closest('tr');
+    const it = c.suggest.find(x=>x.sku===btn.dataset.sku);
+    if(!it) return;
+    const qty = +tr.querySelector('.qty').value || it.qty;
+    const days = prompt(`Через сколько дней будет «${it.name}»?`, '7');
+    if(days===null) return;
+    const n = Math.max(1, Math.min(120, parseInt(days,10) || 7));
+    addReminder({
+      cc:c.cc, cname:c.name, kind:'stock',
+      sku:it.sku, sname:it.name, qty,
+      due: iso(new Date(today().getTime() + n*DAY)),
+      text: `${it.name} — ${qty} шт`
+    });
+    tr.querySelector('.pick').checked = false;
+    tr.querySelector('.pick').dispatchEvent(new Event('change'));
+    renderAll();
+    toast(`Напомнит через ${n} ${plural(n,'день','дня','дней')}`);
+    renderCall();
+  });
+
+  $('#btnCallback').onclick = () => {
+    const days = prompt('Через сколько дней перезвонить?', '2');
+    if(days===null) return;
+    const n = Math.max(1, Math.min(120, parseInt(days,10) || 2));
+    const what = prompt('О чём напомнить?', 'Перезвонить по заказу') || 'Перезвонить';
+    addReminder({cc:c.cc, cname:c.name, kind:'callback', text:what,
+      due: iso(new Date(today().getTime() + n*DAY))});
+    S.calls[c.cc+'|'+iso(today())] = {ts:Date.now(), outcome:'callback', total:0, lines:[]};
+    save(); recompute();
+    toast(`Перезвонить через ${n} ${plural(n,'день','дня','дней')}`);
+    go('today');
+  };
+
+  $$('.remDoneCard').forEach(b => b.onclick = () => {
+    const r = S.reminders.find(x=>x.id===b.dataset.id);
+    if(r){ r.done = true; r.closed = iso(today()); save(); renderAll(); renderCall(); toast('Закрыто'); }
+  });
   $$('.addDrop').forEach(btn => btn.onclick = () => {
     const it = c.items.find(x=>x.sku===btn.dataset.sku);
     if(!it) return;
@@ -934,6 +1124,92 @@ function recordCall(c, outcome){
   save(); recompute();
   toast(outcome==='order' ? `Записано: ${eur2(rec.total)} €` : outcome==='noanswer' ? 'Отмечено: не дозвонилась' : 'Отмечено: отказ');
   go('today');
+}
+
+/* =========================================================================
+   НАПОМИНАНИЯ
+   Что обещано клиенту и не закрыто: товара не было на складе, просили
+   перезвонить, любое «не забыть». Кому, что и когда.
+   ========================================================================= */
+const KIND = {
+  stock:    {label:'ждём товар',   hint:'Товара не было — привезём и допоставим'},
+  callback: {label:'перезвонить',  hint:'Клиент просил связаться позже'},
+  note:     {label:'не забыть',    hint:'Любое другое обещание'}
+};
+function addReminder(r){
+  S.reminders.push(Object.assign({
+    id: 'r' + Date.now() + Math.round(performance.now()*1000)%1000,
+    done:false, created: iso(today())
+  }, r));
+  save();
+}
+function openReminders(cc){
+  const T = iso(today());
+  return S.reminders.filter(r => !r.done && (!cc || r.cc===cc))
+    .sort((a,b)=> (a.due<b.due?-1:a.due>b.due?1:0));
+}
+function dueReminders(cc){
+  const T = iso(today());
+  return openReminders(cc).filter(r => r.due <= T);
+}
+function remState(r){
+  const T = iso(today());
+  if(r.due < T)  return {cls:'c-crit', txt:'просрочено'};
+  if(r.due === T) return {cls:'c-warn', txt:'сегодня'};
+  const d = daysBetween(today(), new Date(r.due+'T00:00:00'));
+  return {cls: d<=3 ? 'c-warn' : 'c-ok', txt:`через ${d} ${plural(d,'день','дня','дней')}`};
+}
+function renderReminders(){
+  const list = openReminders();
+  const done = S.reminders.filter(r=>r.done);
+  const T = iso(today());
+  const late = list.filter(r=>r.due < T);
+  const now  = list.filter(r=>r.due === T);
+  const soon = list.filter(r=>r.due > T);
+
+  $('#remCount').textContent = list.length;
+  $('#remLate').textContent = late.length;
+  $('#remToday').textContent = now.length;
+  $('#remDone').textContent = done.length;
+
+  const group = (title, arr, empty) => {
+    if(!arr.length) return `<h3 style="margin-top:22px">${title}</h3><div class="small muted">${empty}</div>`;
+    return `<h3 style="margin-top:22px">${title} · ${arr.length}</h3>
+      <div class="scroll"><table><thead><tr>
+        <th>Клиент</th><th>Что напомнить</th><th class="num">Когда</th><th>Статус</th><th style="width:268px"></th>
+      </tr></thead><tbody>${arr.map(r=>{
+        const st = remState(r);
+        const what = r.kind==='stock'
+          ? `<b>${esc(r.sname||'товар')}</b>${r.qty?` — ${num(r.qty)} шт`:''}<div class="small muted">товара не было, обещали привезти</div>`
+          : `<b>${esc(r.text||KIND[r.kind].label)}</b><div class="small muted">${KIND[r.kind].label}</div>`;
+        const d = new Date(r.due+'T00:00:00');
+        return `<tr>
+          <td><b>${esc(r.cname)}</b><div class="small muted">${esc(r.cc)}${(S.clients[r.cc]&&S.clients[r.cc].phone)?' · '+esc(S.clients[r.cc].phone):''}</div></td>
+          <td>${what}</td>
+          <td class="num">${dmy(d)}<div class="small muted">${WD_SHORT[d.getDay()]}</div></td>
+          <td><span class="chip ${st.cls}"><i class="dot"></i>${st.txt}</span></td>
+          <td><div class="row" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap">
+            <button class="btn ghost small remOpen" data-cc="${esc(r.cc)}">карточка</button>
+            <button class="btn ghost small remPush" data-id="${r.id}">+3 дн</button>
+            <button class="btn small remDone" data-id="${r.id}">Сделано</button>
+          </div></td></tr>`;
+      }).join('')}</tbody></table></div>`;
+  };
+
+  $('#remBody').innerHTML =
+      group('Просрочено', late, 'ничего не просрочено')
+    + group('Сегодня', now, 'на сегодня напоминаний нет')
+    + group('Впереди', soon, 'дальше пусто');
+
+  $$('.remDone').forEach(b=>b.onclick=()=>{
+    const r = S.reminders.find(x=>x.id===b.dataset.id);
+    if(r){ r.done = true; r.closed = iso(today()); save(); renderReminders(); renderToday(); toast('Закрыто'); }
+  });
+  $$('.remPush').forEach(b=>b.onclick=()=>{
+    const r = S.reminders.find(x=>x.id===b.dataset.id);
+    if(r){ r.due = iso(new Date(new Date(r.due+'T00:00:00').getTime() + 3*DAY)); save(); renderReminders(); toast('Перенесено на 3 дня'); }
+  });
+  $$('.remOpen').forEach(b=>b.onclick=()=>openCall(b.dataset.cc));
 }
 
 /* =========================================================================
@@ -1157,43 +1433,59 @@ function loadDemo(){
   // Клиенты ВЫМЫШЛЕННЫЕ: файл пересылается и открывается на разных машинах,
   // поэтому персональных данных реальных клиентов в нём быть не должно (GDPR).
   // Артикулы и названия товаров — настоящие, из каталога ICONOS.
+  // Заказы идут строго по графику, поэтому у каждого — свои дни недели
+  // (1=пн … 6=сб) и периодичность в неделях.
   const CLIENTS = [
-    ['001247','MERCADO SLAVIA (ATOCHA)',7,11],
-    ['001248','MERCADO SLAVIA (ALUCHE)',7,10],
-    ['001283','OLENA KOVALENKO',10,8],
-    ['000827','MARYNA TKACHENKO',14,7],
-    ['000942','HALYNA PETRENKO',12,7],
-    ['005286','PAVLO HRYTSENKO',21,6],
-    ['050024','BOHDAN MELNYK',14,8],
-    ['001294','SVITLANA BONDAR',18,6],
-    ['000518','TIENDA RUSALKA MADRID',10,9],
-    ['000294','ANDREI VOLKOV (PORTO)',28,9],
-    ['012131','NATALIA SHEVCHUK',21,5],
-    ['000476','ELENA MOROZOVA',14,6],
-    ['000606','TIENDA BEREZKA',30,4],
-    ['006082','MERCADO KALYNA MADRID',12,7],
-    ['064265','ALIMENTACION DNIPRO',21,6]
+    ['001247','MERCADO SLAVIA (ATOCHA)',      [2,5], 1, 11],
+    ['001248','MERCADO SLAVIA (ALUCHE)',      [2,5], 1, 10],
+    ['001283','OLENA KOVALENKO',              [3],   1,  8],
+    ['000827','MARYNA TKACHENKO',             [4],   2,  7],
+    ['000942','HALYNA PETRENKO',              [2],   1,  7],
+    ['005286','PAVLO HRYTSENKO',              [5],   3,  6],
+    ['050024','BOHDAN MELNYK',                [1],   2,  8],
+    ['001294','SVITLANA BONDAR',              [3],   2,  6],
+    ['000518','TIENDA RUSALKA MADRID',        [1,4], 1,  9],
+    ['000294','ANDREI VOLKOV (PORTO)',        [4],   4,  9],
+    ['012131','NATALIA SHEVCHUK',             [5],   3,  5],
+    ['000476','ELENA MOROZOVA',               [2],   2,  6],
+    ['000606','TIENDA BEREZKA',               [3],   4,  4],
+    ['006082','MERCADO KALYNA MADRID',        [1],   1,  7],
+    ['064265','ALIMENTACION DNIPRO',          [4],   3,  6]
   ];
 
   const T = today();
   const lines = [];
-  for(const [cc,name,cycle,nsku] of CLIENTS){
+  const start = new Date(T.getTime() - 330*DAY);
+  for(const [cc,name,wdays,everyWeeks,nsku] of CLIENTS){
     // устойчивый набор товаров этого магазина
     const mine = [];
     const pool = [...SKUS];
     for(let i=0;i<nsku && pool.length;i++) mine.push(pool.splice(Math.floor(rnd()*pool.length),1)[0]);
-    // база количеств
     const base = {};
     for(const s of mine) base[s[0]] = [12,18,24,36,48][Math.floor(rnd()*5)];
-    // дата последнего заказа: у части клиентов уже просрочка
-    const lateness = rnd();
-    const lastOffset = Math.round(cycle * (lateness<.25 ? 0.3 : lateness<.6 ? 0.9 : lateness<.85 ? 1.5 : 2.4));
-    let d = new Date(T.getTime() - lastOffset*DAY);
-    const start = new Date(T.getTime() - 330*DAY);
-    // одна позиция у части клиентов "выпадает" в последние месяцы
+
+    // одна позиция у части клиентов «выпадает» в последние месяцы
     const dropSku = rnd()<.4 ? mine[mine.length-1][0] : null;
     const dropAfter = new Date(T.getTime() - Math.round((60+rnd()*60))*DAY);
-    while(d > start){
+
+    // Сколько дней графика клиент уже пропустил: у части — ноль, у части 1-2.
+    const skipTail = rnd()<.55 ? 0 : (rnd()<.7 ? 1 : 2);
+
+    // собираем все дни графика за год, потом отбрасываем хвост
+    const slots = [];
+    let weekIdx = 0;
+    for(let w = new Date(start.getTime()); w <= T; w = new Date(w.getTime() + 7*DAY), weekIdx++){
+      if(weekIdx % everyWeeks !== 0) continue;
+      for(const wd of wdays){
+        const d = new Date(w.getTime());
+        d.setDate(d.getDate() + ((wd - d.getDay() + 7) % 7));
+        if(d >= start && d <= T) slots.push(new Date(d));
+      }
+    }
+    slots.sort((a,b)=>a-b);
+    const useSlots = skipTail ? slots.slice(0, Math.max(1, slots.length - skipTail)) : slots;
+
+    for(const d of useSlots){
       for(const [sku,sname,price] of mine){
         if(rnd() < .18) continue;                        // не каждый раз всё
         if(sku===dropSku && d > dropAfter) continue;     // выпавшая позиция
@@ -1201,15 +1493,32 @@ function loadDemo(){
         const p = +(price * (0.96 + rnd()*0.08)).toFixed(2);
         lines.push({date: iso(d), cc, cname:name, sku, sname, qty:q, price:p, total:+(q*p).toFixed(2)});
       }
-      d = new Date(d.getTime() - Math.max(3, Math.round(cycle*(0.75+rnd()*0.5)))*DAY);
     }
   }
-  S.lines = lines; S.demo = true; S.calls={}; S.adj={}; S.plan=0;
+  S.lines = lines; S.demo = true; S.calls={}; S.adj={}; S.reminders=[]; S.plan=0;
   S.clients = {
     '001247':{phone:'910 000 001',note:'своя точка, забирают сами'},
     '001283':{phone:'+34 600 000 002',note:'звонить после 11:00'},
     '000294':{phone:'+351 910 000 003',note:'Португалия, доставка по четвергам'}
   };
+  // примеры напоминаний: главный случай — товара не было, обещали привезти
+  const rday = n => iso(new Date(T.getTime() + n*DAY));
+  S.reminders = [
+    {id:'d1', cc:'001283', cname:'OLENA KOVALENKO', kind:'stock',
+     sku:'00500110', sname:'Requeson fresco 0% grasa 12x370gr DEREVENKA', qty:24,
+     due:rday(-2), text:'Requeson fresco 0% — 24 шт', done:false, created:rday(-9)},
+    {id:'d2', cc:'000518', cname:'TIENDA RUSALKA MADRID', kind:'stock',
+     sku:'00500210', sname:'Kefir 1.5% grasa 12x1L JANA', qty:36,
+     due:rday(0), text:'Kefir 1.5% JANA — 36 шт', done:false, created:rday(-6)},
+    {id:'d3', cc:'000294', cname:'ANDREI VOLKOV (PORTO)', kind:'callback',
+     due:rday(1), text:'Перезвонить: думает по сырковой массе', done:false, created:rday(-3)},
+    {id:'d4', cc:'006082', cname:'MERCADO KALYNA MADRID', kind:'stock',
+     sku:'00500140', sname:'Requeson fresco granular 15% grasa 10x430gr RD', qty:18,
+     due:rday(4), text:'Requeson granular RD — 18 шт', done:false, created:rday(-1)},
+    {id:'d5', cc:'000942', cname:'HALYNA PETRENKO', kind:'note',
+     due:rday(6), text:'Обещали прайс на новую линейку', done:false, created:rday(-2)}
+  ];
+
   $('#planInput').value = '';
   save(); recompute(); go('today');
   toast('Демо-данные загружены: ' + num(lines.length) + ' строк');
@@ -1230,12 +1539,22 @@ function saveProject(){
 /* =========================================================================
    НАВИГАЦИЯ И СВЯЗКА
    ========================================================================= */
+function fillReminderForm(){
+  const sel = $('#rNewClient');
+  const cur = sel.value;
+  const opts = M ? M.clients.slice().sort((a,b)=>a.name.localeCompare(b.name,'ru')) : [];
+  sel.innerHTML = opts.map(c=>`<option value="${esc(c.cc)}">${esc(c.name)}</option>`).join('')
+    || '<option value="">— нет клиентов —</option>';
+  if(cur) sel.value = cur;
+  if(!$('#rNewDue').value) $('#rNewDue').value = iso(new Date(today().getTime() + 7*DAY));
+}
 function go(tab){
   $$('#tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab===tab)));
-  ['today','call','forecast','quality','data'].forEach(t =>
+  ['today','call','rem','forecast','quality','data'].forEach(t =>
     $('#tab-'+t).classList.toggle('hidden', t!==tab));
   if(tab==='today') renderToday();
   if(tab==='call') renderCall();
+  if(tab==='rem'){ fillReminderForm(); renderReminders(); }
   if(tab==='forecast') renderForecast();
   if(tab==='quality') renderQuality();
   if(tab==='data') renderData();
@@ -1243,12 +1562,32 @@ function go(tab){
 }
 function renderAll(){
   renderToday();
+  const open = openReminders().length, late = dueReminders().length;
+  const nb = $('#navRem');
+  nb.textContent = open ? String(open) : '';
+  nb.style.display = open ? '' : 'none';
+  nb.style.background = late ? 'var(--critical)' : '';
+  nb.style.color = late ? '#fff' : '';
+  if(!$('#tab-rem').classList.contains('hidden')){ fillReminderForm(); renderReminders(); }
   if(!$('#tab-forecast').classList.contains('hidden')) renderForecast();
   if(!$('#tab-quality').classList.contains('hidden')) renderQuality();
   if(!$('#tab-data').classList.contains('hidden')) renderData();
   $('#dataBadge').textContent = !S.lines.length ? 'нет данных'
     : S.demo ? 'демо-данные' : num(S.lines.length)+' строк';
 }
+$('#rNewAdd').onclick = () => {
+  const cc = $('#rNewClient').value;
+  const due = $('#rNewDue').value;
+  const text = $('#rNewText').value.trim();
+  if(!cc){ toast('Сначала загрузите данные'); return; }
+  if(!due){ toast('Укажите дату'); return; }
+  if(!text){ toast('Напишите, о чём напомнить'); $('#rNewText').focus(); return; }
+  const c = M.byC[cc];
+  addReminder({cc, cname: c?c.name:cc, kind: $('#rNewKind').value, text, due, sname:text});
+  $('#rNewText').value = '';
+  renderAll(); renderReminders();
+  toast('Напоминание добавлено');
+};
 
 $$('#tabs button').forEach(b => b.onclick = () => go(b.dataset.tab));
 $('#btnSave').onclick = saveProject;
@@ -1269,7 +1608,7 @@ $('#btnParsePaste').onclick = () => {
 };
 $('#btnReset').onclick = () => {
   if(!confirm('Удалить все загруженные данные, записи звонков и выученные поправки?')) return;
-  S = {lines:[], clients:{}, calls:{}, adj:{}, plan:0, demo:false};
+  S = blankState();
   localStorage.removeItem(LS); M=null; RAW=null;
   $('#mapCard').classList.add('hidden'); $('#paste').value=''; $('#planInput').value='';
   renderAll(); go('data'); toast('Очищено');
@@ -1281,7 +1620,8 @@ $('#fileProj').onchange = e => {
   r.onload = () => { try{
       const o = JSON.parse(r.result);
       if(!o || !Array.isArray(o.lines)) throw 0;
-      S = Object.assign({lines:[],clients:{},calls:{},adj:{},plan:0,demo:false}, o);
+      S = Object.assign(blankState(), o);
+      if(!Array.isArray(S.reminders)) S.reminders = [];
       save(); recompute(); go('today'); toast('Проект открыт');
     } catch(err){ toast('Это не файл проекта'); } };
   r.readAsText(f);
