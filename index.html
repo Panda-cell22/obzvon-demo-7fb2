@@ -141,6 +141,16 @@ ol.steps li{margin-bottom:7px}
 .toast.show{opacity:1}
 kbd{font:inherit;font-size:12.5px;background:var(--wash);border:1px solid var(--ring);border-radius:5px;padding:1px 5px}
 
+/* ---------- подвкладки кабинета клиента ---------- */
+.subnav{display:flex;gap:2px;margin:0 0 16px;border-bottom:1px solid var(--grid);flex-wrap:wrap}
+.subnav button{
+  appearance:none;border:0;background:transparent;font:inherit;font-size:14px;
+  color:var(--text-2);padding:8px 14px;border-radius:8px 8px 0 0;cursor:pointer;
+  border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap;
+}
+.subnav button:hover{background:var(--wash);color:var(--text-1)}
+.subnav button[aria-selected="true"]{color:var(--text-1);font-weight:600;border-bottom-color:var(--series-1)}
+
 /* ---------- WhatsApp ---------- */
 .btn.wa{background:#128c7e;border-color:transparent;color:#fff;font-weight:550}
 .btn.wa:hover:not(:disabled){background:#0f7568}
@@ -455,15 +465,17 @@ let S = {
   calls: {},        // 'cc|YYYY-MM-DD' -> {ts, lines:[{sku,pred,act}], total, outcome}
   adj: {},          // 'cc|sku' -> {f: factor, n: count}
   reminders: [],    // {id, cc, cname, kind:'stock'|'callback'|'note', sku, sname, qty, due, text, done}
+  messages: [],     // {id, cc, date, ts, text} — что и когда писали клиенту
   plan: 0,
   demo: false
 };
 function blankState(){
-  return {lines:[], clients:{}, calls:{}, adj:{}, reminders:[], plan:0, demo:false};
+  return {lines:[], clients:{}, calls:{}, adj:{}, reminders:[], messages:[], plan:0, demo:false};
 }
 function save(){ try{ localStorage.setItem(LS, JSON.stringify(S)); }catch(e){} }
 function load(){ try{ const r=localStorage.getItem(LS); if(r) S=Object.assign(S,JSON.parse(r)); }catch(e){}
-  if(!Array.isArray(S.reminders)) S.reminders = []; }
+  if(!Array.isArray(S.reminders)) S.reminders = [];
+  if(!Array.isArray(S.messages)) S.messages = []; }
 
 /* =========================================================================
    УТИЛИТЫ
@@ -778,9 +790,21 @@ function recompute(){
     // предлагаемые позиции: пора или уже пора (>=0.65 цикла).
     // Выпавшие исключаем — они идут отдельным блоком «перестал брать»,
     // чтобы одна позиция не оказалась в двух списках сразу.
-    const suggest = items
+    let suggest = items
       .filter(i => i.overdue!=null && i.overdue >= .65 && !i.dropped)
       .sort((a,b)=> b.qty*b.price - a.qty*a.price);
+
+    // Клиент, который давно молчит, формально «перестал брать» всё — и заказ
+    // выходил пустым. Но ему-то как раз и надо звонить. Поэтому подставляем
+    // его исторический набор, помечая низкой уверенностью.
+    if(!suggest.length){
+      suggest = items
+        .filter(i => i.n >= 2)
+        .sort((a,b)=> b.n*b.baseQty*b.price - a.n*a.baseQty*a.price)
+        .slice(0, 8)
+        .map(i => Object.assign({}, i, {revive:true}));
+    }
+    const suggestSkus = new Set(suggest.map(i=>i.sku));
     const predTotal = suggest.reduce((s,i)=>s+i.qty*i.price, 0);
 
     clients.push({
@@ -789,7 +813,7 @@ function recompute(){
       overdue: cycle ? daysSince/cycle : null,
       sched, schedLabel: scheduleLabel(sched), nextDue, dueIn, missed,
       items, suggest, predTotal,
-      dropped: items.filter(i=>i.dropped)
+      dropped: items.filter(i=>i.dropped && !suggestSkus.has(i.sku))
     });
   }
   // Сортировка: сначала пропустившие график, потом чей день сегодня, дальше по близости дня.
@@ -942,8 +966,11 @@ function renderClientRow(tb, c){
 /* =========================================================================
    ЭКРАН «ЗВОНОК»
    ========================================================================= */
-let curCC = null;
-function openCall(cc){ curCC = cc; go('call'); renderCall(); }
+let curCC = null, curPane = 'order';
+function openCall(cc){
+  if(cc !== curCC) curPane = 'order';   // новый клиент — снова с быстрого приёма заказа
+  curCC = cc; go('call'); renderCall();
+}
 
 function renderCall(){
   const has = M && curCC && M.byC[curCC];
@@ -956,7 +983,7 @@ function renderCall(){
   const prevCall = Object.keys(S.calls).filter(k=>k.startsWith(c.cc+'|')).sort().pop();
 
   const rows = c.suggest.map(i => {
-    const conf = i.n>=4 ? 'высокая' : i.n>=2 ? 'средняя' : 'низкая';
+    const conf = i.revive ? 'давно не брал' : i.n>=4 ? 'высокая' : i.n>=2 ? 'средняя' : 'низкая';
     const late = i.overdue>=1.4;
     return `<tr data-sku="${esc(i.sku)}">
       <td><input type="checkbox" class="pick" checked></td>
@@ -1001,6 +1028,17 @@ function renderCall(){
       ${prevCall ? `<div class="note">Прошлый зафиксированный звонок: ${prevCall.split('|')[1]} — заказ на ${eur2(S.calls[prevCall].total)} €</div>` : ''}
     </div>
 
+    <div class="subnav" id="cabNav">
+      <button data-p="order" aria-selected="true">Заказ</button>
+      <button data-p="time"  aria-selected="false">Хронология</button>
+      <button data-p="goods" aria-selected="false">Товары</button>
+    </div>
+
+    <div id="cabTime" class="hidden"><div class="card"><h2>Вся история</h2><div id="cabTimeBody"></div></div></div>
+    <div id="cabGoods" class="hidden"><div class="card"><h2>Что и когда берёт</h2><div id="cabGoodsBody"></div></div></div>
+
+    <div id="cabOrder">
+
     ${openReminders(c.cc).length ? `
     <div class="card" style="border-left:3px solid var(--critical)">
       <h2>Не забыть сказать</h2>
@@ -1035,7 +1073,7 @@ function renderCall(){
         <span class="small muted">Итого без НДС</span>
         <span style="font-size:22px;font-weight:640" class="tnum" id="sugTotal">—</span>
         <span style="font-size:18px">€</span>
-      </div>` : '<div class="empty">По графику этому клиенту заказ пока не нужен. Если он всё-таки звонит — добавьте позиции из блока ниже или примите заказ вручную в ICONOS.</div>'}
+      </div>` : '<div class="empty">Истории по этому клиенту слишком мало, предложить нечего — принимайте заказ вручную в ICONOS.</div>'}
     </div>
 
     ${c.dropped.length ? `
@@ -1079,6 +1117,7 @@ function renderCall(){
         <span style="flex:1"></span>
         <button class="btn ghost" id="btnBack">← к списку</button>
       </div>
+    </div>
     </div>`;
 
   const recalc = () => {
@@ -1130,13 +1169,28 @@ function renderCall(){
   $('#btnWaSend').onclick = () => {
     const txt = $('#waText').value.trim();
     if(!txt){ toast('Сначала напишите текст'); $('#waText').focus(); return; }
-    waOpen((S.clients[c.cc]||{}).phone, txt);
+    waOpen((S.clients[c.cc]||{}).phone, txt, c.cc);
   };
 
   $('#cPhone').oninput = e => {
     S.clients[c.cc]=S.clients[c.cc]||{}; S.clients[c.cc].phone=e.target.value; save(); waNote();
   };
   $('#cNote').oninput  = e => { S.clients[c.cc]=S.clients[c.cc]||{}; S.clients[c.cc].note =e.target.value; save(); };
+  // ---- подвкладки кабинета: Заказ / Хронология / Товары ----
+  // Тяжёлые разделы считаем по первому открытию, чтобы приём заказа не тормозил
+  const built = {};
+  const showPane = p => {
+    $$('#cabNav button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.p === p)));
+    $('#cabOrder').classList.toggle('hidden', p !== 'order');
+    $('#cabTime').classList.toggle('hidden',  p !== 'time');
+    $('#cabGoods').classList.toggle('hidden', p !== 'goods');
+    if(p === 'time'  && !built.time ){ $('#cabTimeBody').innerHTML  = renderTimeline(c);    built.time  = true; }
+    if(p === 'goods' && !built.goods){ $('#cabGoodsBody').innerHTML = renderClientGoods(c); built.goods = true; }
+  };
+  $$('#cabNav button').forEach(b => b.onclick = () => showPane(b.dataset.p));
+  showPane(curPane);
+  $$('#cabNav button').forEach(b => b.addEventListener('click', () => { curPane = b.dataset.p; }));
+
   $('#btnBack').onclick = () => go('today');
   const cp = $('#btnCopy'); if(cp) cp.onclick = () => copyForIconos(c);
   $('#btnRecord').onclick   = () => recordCall(c,'order');
@@ -1281,10 +1335,15 @@ function waLink(raw, text){
   const p = waPhone(raw);
   return p ? `https://wa.me/${p}?text=${encodeURIComponent(text)}` : null;
 }
-function waOpen(raw, text){
+function waOpen(raw, text, cc){
   const url = waLink(raw, text);
   if(!url){ toast('Нет телефона — впишите его в карточке клиента'); return false; }
   window.open(url, '_blank', 'noopener');
+  if(cc){   // в хронологию клиента: что и когда писали
+    S.messages.push({id:'m'+Date.now()+Math.round(performance.now()*1000)%1000,
+                     cc, date: iso(today()), ts: Date.now(), text});
+    save();
+  }
   return true;
 }
 /* Заготовки сообщений */
@@ -1300,6 +1359,130 @@ const WA_TPL = {
     + lines.map(l=>`• ${l.name} — ${num(l.qty)} шт`).join('\n')
     + `\nИтого ${eur2(total)} € без НДС. Спасибо!`
 };
+
+/* =========================================================================
+   КАБИНЕТ КЛИЕНТА
+   Вся история одного магазина в одном месте: заказы, звонки, обещания,
+   сообщения — одной лентой по датам, плюс разрез по товарам.
+   ========================================================================= */
+
+/* Единая лента событий клиента, свежие сверху */
+function clientTimeline(cc){
+  const ev = [];
+
+  // заказы: строки сворачиваем в документ по дате
+  const byDate = {};
+  for(const l of S.lines){
+    if(l.cc !== cc) continue;
+    (byDate[l.date] = byDate[l.date] || []).push(l);
+  }
+  for(const [date, lines] of Object.entries(byDate)){
+    ev.push({
+      date, kind:'order',
+      total: lines.reduce((s,l)=>s+l.total,0),
+      qty:   lines.reduce((s,l)=>s+l.qty,0),
+      lines: lines.slice().sort((a,b)=>b.total-a.total)
+    });
+  }
+
+  // результаты звонков, кроме принятых заказов (они уже есть выше)
+  for(const [k,v] of Object.entries(S.calls)){
+    const [kcc, date] = k.split('|');
+    if(kcc !== cc || v.outcome === 'order') continue;
+    ev.push({date, kind:'call', outcome:v.outcome});
+  }
+
+  // напоминания: заведено и закрыто
+  for(const r of S.reminders){
+    if(r.cc !== cc) continue;
+    ev.push({date: r.created || r.due, kind:'rem-new', r});
+    if(r.done && r.closed) ev.push({date: r.closed, kind:'rem-done', r});
+  }
+
+  // сообщения
+  for(const m of S.messages) if(m.cc === cc) ev.push({date:m.date, kind:'msg', text:m.text});
+
+  return ev.sort((a,b)=> a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
+}
+
+const CALL_LABEL = {noanswer:'не дозвонилась', refused:'отказ', callback:'договорились перезвонить'};
+
+function renderTimeline(c){
+  const ev = clientTimeline(c.cc);
+  if(!ev.length) return '<div class="empty">История пуста</div>';
+
+  const orders = ev.filter(e=>e.kind==='order');
+  const rows = ev.slice(0, 120).map(e => {
+    const d = new Date(e.date+'T00:00:00');
+    const when = `${dmy(d)} ${d.getFullYear()}<div class="small muted">${WD_SHORT[d.getDay()]}</div>`;
+    let dot = 'var(--axis)', what = '';
+    if(e.kind === 'order'){
+      dot = 'var(--series-1)';
+      what = `<b>Заказ на ${eur2(e.total)} €</b>`
+           + `<div class="small muted">${e.lines.length} ${plural(e.lines.length,'позиция','позиции','позиций')}, ${num(e.qty)} шт</div>`
+           + `<details style="margin-top:5px"><summary class="small" style="cursor:pointer;color:var(--series-1)">состав</summary>`
+           + `<div class="small muted" style="margin-top:5px;line-height:1.7">`
+           + e.lines.map(l=>`${esc(l.sname)} — ${num(l.qty)} шт × ${eur2(l.price)} €`).join('<br>')
+           + `</div></details>`;
+    } else if(e.kind === 'call'){
+      dot = 'var(--serious)';
+      what = `<b>${CALL_LABEL[e.outcome] || e.outcome}</b>`;
+    } else if(e.kind === 'rem-new'){
+      dot = 'var(--critical)';
+      what = `<b>Обещали: ${esc(e.r.sname || e.r.text || '')}</b>`
+           + `<div class="small muted">напомнить ${dmy(new Date(e.r.due+'T00:00:00'))}</div>`;
+    } else if(e.kind === 'rem-done'){
+      dot = 'var(--good)';
+      what = `<b>Закрыто: ${esc(e.r.sname || e.r.text || '')}</b>`;
+    } else if(e.kind === 'msg'){
+      dot = '#128c7e';
+      what = `<b>Написали в WhatsApp</b><div class="small muted">${esc(e.text).slice(0,140)}</div>`;
+    }
+    return `<tr>
+      <td style="width:110px;white-space:nowrap" class="small">${when}</td>
+      <td style="width:14px"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${dot}"></span></td>
+      <td>${what}</td></tr>`;
+  }).join('');
+
+  const first = orders.length ? orders[orders.length-1].date : null;
+  return `
+    <div class="tiles" style="margin-bottom:14px">
+      <div class="tile"><div class="lab">Заказов всего</div><div class="val tnum">${orders.length}</div>
+        <div class="sub">${first ? 'с '+dmy(new Date(first+'T00:00:00'))+' '+first.slice(0,4) : '—'}</div></div>
+      <div class="tile"><div class="lab">Оборот за всё время</div><div class="val tnum">${eur(c.rev)} €</div>
+        <div class="sub">за 90 дней ${eur(c.rev90)} €</div></div>
+      <div class="tile"><div class="lab">Средний чек</div><div class="val tnum">${eur(orders.length?c.rev/orders.length:0)} €</div>
+        <div class="sub">по всем заказам</div></div>
+      <div class="tile"><div class="lab">Событий в ленте</div><div class="val tnum">${ev.length}</div>
+        <div class="sub">заказы, звонки, обещания</div></div>
+    </div>
+    <div class="scroll"><table><tbody>${rows}</tbody></table></div>
+    ${ev.length>120?'<p class="small muted" style="margin-top:10px">Показаны последние 120 событий.</p>':''}`;
+}
+
+function renderClientGoods(c){
+  const items = c.items.slice().sort((a,b)=> b.n*b.baseQty*b.price - a.n*a.baseQty*a.price);
+  if(!items.length) return '<div class="empty">Нет истории по товарам</div>';
+  const rows = items.map(i=>{
+    const st = i.dropped ? {cls:'c-crit', t:'перестал брать'}
+             : i.overdue!=null && i.overdue>=1 ? {cls:'c-warn', t:'пора'}
+             : {cls:'c-ok', t:'берёт'};
+    return `<tr>
+      <td><b>${esc(i.name)}</b><div class="small muted">${esc(i.sku)}</div></td>
+      <td class="num">${i.n}</td>
+      <td class="num">${i.interval ? i.interval+' <span class="muted small">дн</span>' : '<span class="muted">—</span>'}</td>
+      <td class="num">${num(i.baseQty)}</td>
+      <td class="num small">${i.lastDate}<div class="small muted">${i.daysSince} дн назад</div></td>
+      <td class="num tnum">${eur2(i.price)}</td>
+      <td><span class="chip ${st.cls}"><i class="dot"></i>${st.t}</span></td></tr>`;
+  }).join('');
+  return `<div class="scroll"><table>
+    <thead><tr><th>Товар</th><th class="num">Раз брал</th><th class="num">Как часто</th>
+      <th class="num">Обычно, шт</th><th class="num">Последний раз</th><th class="num">Цена</th><th>Статус</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>
+    <p class="small muted" style="margin-top:10px">Сортировка — по вкладу в оборот.
+      «Как часто» и «обычно, шт» — медианы по его собственной истории.</p>`;
+}
 
 /* =========================================================================
    НАПОМИНАНИЯ
@@ -1390,7 +1573,7 @@ function renderReminders(){
     const r = S.reminders.find(x=>x.id===b.dataset.id);
     if(!r) return;
     const tpl = r.kind==='stock' ? WA_TPL.stock(r) : WA_TPL.note(r);
-    waOpen((S.clients[r.cc]||{}).phone, tpl);
+    waOpen((S.clients[r.cc]||{}).phone, tpl, r.cc);
   });
 }
 
@@ -1644,7 +1827,12 @@ function loadDemo(){
   const T = today();
   const lines = [];
   const start = new Date(T.getTime() - 330*DAY);
-  for(const [cc,name,wdays,everyWeeks,nsku] of CLIENTS){
+  // Чтобы демо выглядело одинаково в любой день недели, двум магазинам
+  // назначаем график на сегодняшний день и не даём им пропускать сроки.
+  const todayWd = T.getDay();
+  const DUE_TODAY = new Set(['001283','006082']);
+  for(let [cc,name,wdays,everyWeeks,nsku] of CLIENTS){
+    if(DUE_TODAY.has(cc)){ wdays = [todayWd]; everyWeeks = 1; }
     // устойчивый набор товаров этого магазина
     const mine = [];
     const pool = [...SKUS];
@@ -1657,7 +1845,7 @@ function loadDemo(){
     const dropAfter = new Date(T.getTime() - Math.round((60+rnd()*60))*DAY);
 
     // Сколько дней графика клиент уже пропустил: у части — ноль, у части 1-2.
-    const skipTail = rnd()<.55 ? 0 : (rnd()<.7 ? 1 : 2);
+    const skipTail = DUE_TODAY.has(cc) ? 0 : (rnd()<.55 ? 0 : (rnd()<.7 ? 1 : 2));
 
     // собираем все дни графика за год, потом отбрасываем хвост
     const slots = [];
@@ -1683,7 +1871,7 @@ function loadDemo(){
       }
     }
   }
-  S.lines = lines; S.demo = true; S.calls={}; S.adj={}; S.reminders=[]; S.plan=0;
+  S.lines = lines; S.demo = true; S.calls={}; S.adj={}; S.reminders=[]; S.messages=[]; S.plan=0;
   S.clients = {
     '001247':{phone:'910 000 001',note:'своя точка, забирают сами'},
     '001283':{phone:'+34 600 000 002',note:'звонить после 11:00'},
